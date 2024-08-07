@@ -7,15 +7,17 @@ import os
 import requests
 import zipfile
 import tempfile
+from decimal import Decimal, getcontext
 
 class VideoCombinerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("LM - Video Combiner")
-        self.root.geometry("800x600")
-        self.root.resizable(False, False)
+        self.root.geometry("1200x800")
+        self.root.resizable(True, True)
         self.root.configure(bg='#282c34')
         self.video_files = []
+        self.banner_files = []
 
         style = ttk.Style()
         style.configure("TButton", font=("Helvetica", 12), padding=10, background='#61afef', foreground='#000')
@@ -28,20 +30,35 @@ class VideoCombinerApp:
         self.label = ttk.Label(self.frame, text="LM - Video Combiner", style='TLabel')
         self.label.pack(pady=20)
 
-        self.select_button = ttk.Button(self.frame, text="Selecione os vídeos", command=self.select_videos, style='TButton')
-        self.select_button.pack(fill=tk.X, pady=10)
+        self.select_video_button = ttk.Button(self.frame, text="Selecione os vídeos", command=self.select_videos, style='TButton')
+        self.select_video_button.pack(fill=tk.X, pady=10)
 
-        self.listbox = tk.Listbox(self.frame, font=("Helvetica", 12), selectmode=tk.SINGLE)
-        self.listbox.pack(fill=tk.BOTH, expand=True, pady=10)
+        self.select_banner_button = ttk.Button(self.frame, text="Selecione os banners", command=self.select_banners, style='TButton')
+        self.select_banner_button.pack(fill=tk.X, pady=10)
+
+        lists_frame = ttk.Frame(self.frame, style='TFrame')
+        lists_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+
+        self.listbox_videos = tk.Listbox(lists_frame, font=("Helvetica", 12), selectmode=tk.SINGLE)
+        self.listbox_videos.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
+
+        self.listbox_banners = tk.Listbox(lists_frame, font=("Helvetica", 12), selectmode=tk.SINGLE)
+        self.listbox_banners.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
 
         button_frame = ttk.Frame(self.frame, style='TFrame')
         button_frame.pack(fill=tk.X, pady=10)
 
-        self.up_button = ttk.Button(button_frame, text="↑ Mover para Cima", command=self.move_up, style='TButton')
+        self.up_button = ttk.Button(button_frame, text="↑ Mover para Cima", command=lambda: self.move_item("up"), style='TButton')
         self.up_button.pack(side=tk.LEFT, padx=5, pady=5)
 
-        self.down_button = ttk.Button(button_frame, text="↓ Mover para Baixo", command=self.move_down, style='TButton')
+        self.down_button = ttk.Button(button_frame, text="↓ Mover para Baixo", command=lambda: self.move_item("down"), style='TButton')
         self.down_button.pack(side=tk.LEFT, padx=5, pady=5)
+
+        self.delete_button = ttk.Button(button_frame, text="Deletar Selecionado", command=self.delete_selected, style='TButton')
+        self.delete_button.pack(side=tk.LEFT, padx=5, pady=5)
+
+        self.create_videos_button = ttk.Button(button_frame, text="Criar Vídeos", command=self.create_videos, style='TButton')
+        self.create_videos_button.pack(side=tk.LEFT, padx=5, pady=5)
 
         self.combine_button = ttk.Button(button_frame, text="Agrupar vídeos", command=self.combine_videos, style='TButton')
         self.combine_button.pack(side=tk.RIGHT, padx=5, pady=5)
@@ -51,41 +68,103 @@ class VideoCombinerApp:
         self.progress.pack_forget()
 
         self.ffmpeg_path = os.path.join(tempfile.gettempdir(), "ffmpeg", "ffmpeg.exe")
+        self.ffprobe_path = os.path.join(tempfile.gettempdir(), "ffmpeg", "ffprobe.exe")
         self.check_ffmpeg()
 
     def select_videos(self):
         files = filedialog.askopenfilenames(filetypes=[("MP4 files", "*.mp4")])
         if files:
-            self.video_files = list(files)
-            self.update_listbox()
-            messagebox.showinfo("Vídeos selecionados", f"Foram selecionados {len(self.video_files)} vídeos")
+            self.video_files.extend(files)
+            self.update_listbox_videos()
+            messagebox.showinfo("Vídeos selecionados", f"Foram selecionados {len(files)} vídeos")
 
-    def update_listbox(self):
-        self.listbox.delete(0, tk.END)
+    def select_banners(self):
+        files = filedialog.askopenfilenames(filetypes=[("PNG files", "*.png")])
+        if files:
+            self.banner_files.extend(files)
+            self.update_listbox_banners()
+            messagebox.showinfo("Banners selecionados", f"Foram selecionados {len(files)} banners")
+
+    def update_listbox_videos(self):
+        self.listbox_videos.delete(0, tk.END)
         for i, file in enumerate(self.video_files):
             filename = os.path.basename(file)
             name = os.path.splitext(filename)[0]
-            self.listbox.insert(tk.END, f"{i+1}. {name}")
+            self.listbox_videos.insert(tk.END, f"{i+1}. {name}")
 
-    def move_up(self):
-        selected = self.listbox.curselection()
-        if not selected:
-            return
-        index = selected[0]
-        if index > 0:
-            self.video_files[index], self.video_files[index-1] = self.video_files[index-1], self.video_files[index]
-            self.update_listbox()
-            self.listbox.selection_set(index-1)
+    def update_listbox_banners(self):
+        self.listbox_banners.delete(0, tk.END)
+        for i, file in enumerate(self.banner_files):
+            filename = os.path.basename(file)
+            name = os.path.splitext(filename)[0]
+            self.listbox_banners.insert(tk.END, f"{i+1}. {name}")
 
-    def move_down(self):
-        selected = self.listbox.curselection()
-        if not selected:
+    def move_item(self, direction):
+        if self.listbox_videos.curselection():
+            selected = self.listbox_videos.curselection()
+            index = selected[0]
+            if direction == "up" and index > 0:
+                self.video_files[index], self.video_files[index - 1] = self.video_files[index - 1], self.video_files[index]
+                self.update_listbox_videos()
+                self.listbox_videos.selection_set(index - 1)
+            elif direction == "down" and index < len(self.video_files) - 1:
+                self.video_files[index], self.video_files[index + 1] = self.video_files[index + 1], self.video_files[index]
+                self.update_listbox_videos()
+                self.listbox_videos.selection_set(index + 1)
+        elif self.listbox_banners.curselection():
+            selected = self.listbox_banners.curselection()
+            index = selected[0]
+            if direction == "up" and index > 0:
+                self.banner_files[index], self.banner_files[index - 1] = self.banner_files[index - 1], self.banner_files[index]
+                self.update_listbox_banners()
+                self.listbox_banners.selection_set(index - 1)
+            elif direction == "down" and index < len(self.banner_files) - 1:
+                self.banner_files[index], self.banner_files[index + 1] = self.banner_files[index + 1], self.banner_files[index]
+                self.update_listbox_banners()
+                self.listbox_banners.selection_set(index + 1)
+
+    def delete_selected(self):
+        if self.listbox_videos.curselection():
+            selected = self.listbox_videos.curselection()
+            index = selected[0]
+            del self.video_files[index]
+            self.update_listbox_videos()
+        elif self.listbox_banners.curselection():
+            selected = self.listbox_banners.curselection()
+            index = selected[0]
+            del self.banner_files[index]
+            self.update_listbox_banners()
+
+    def create_videos(self):
+        if not self.video_files or not self.banner_files:
+            messagebox.showwarning("Faltam vídeos ou banners", "Você deve selecionar vídeos e banners para criar os vídeos.")
             return
-        index = selected[0]
-        if index < len(self.video_files) - 1:
-            self.video_files[index], self.video_files[index+1] = self.video_files[index+1], self.video_files[index]
-            self.update_listbox()
-            self.listbox.selection_set(index+1)
+
+        if len(self.banner_files) != len(self.video_files):
+            messagebox.showwarning("Número de banners incorreto", "O número de banners deve ser igual ao número de vídeos selecionados!")
+            return
+
+        output_folder = filedialog.askdirectory()
+        if not output_folder:
+            messagebox.showwarning("Pasta de saída não selecionada", "Você deve selecionar uma pasta de saída para salvar os vídeos.")
+            return
+
+        self.progress.pack(side=tk.BOTTOM, pady=20)
+        self.progress.start()
+
+        threading.Thread(target=self.create_videos_with_banners, args=(output_folder,)).start()
+
+    def create_videos_with_banners(self, output_folder):
+        try:
+            for i, (video, banner) in enumerate(zip(self.video_files, self.banner_files)):
+                output_file = os.path.join(output_folder, f"banner_video_{i}.mov")
+                self.create_mov_with_banner(video, banner, output_file)
+            messagebox.showinfo("Sucesso", "Vídeos MOV com banners foram criados com sucesso.")
+        except Exception as e:
+            self.on_error(e)
+        finally:
+            self.progress.stop()
+            self.progress.pack_forget()
 
     def combine_videos(self):
         if not self.video_files:
@@ -120,6 +199,7 @@ class VideoCombinerApp:
                 '-filter_complex', filter_complex,
                 '-map', '[v]',
                 '-map', '[a]',
+                '-r', '59.94',
                 '-c:v', 'libx264',
                 '-c:a', 'aac',
                 '-strict', 'experimental',
@@ -130,6 +210,28 @@ class VideoCombinerApp:
             self.on_success(output_file)
         except Exception as e:
             self.on_error(e)
+
+    def create_mov_with_banner(self, video_file, banner_file, output_file):
+        try:
+            getcontext().prec = 10;
+            result = subprocess.run([self.ffprobe_path, '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', video_file], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            duration = Decimal(result.stdout.decode().strip())
+
+
+            command = [
+                self.ffmpeg_path,
+                '-loop', '1',
+                '-i', banner_file,
+                '-t', str(duration),
+                '-r', '59.94',
+                '-c:v', 'prores_ks',
+                '-c:a', 'aac',
+                '-shortest',
+                output_file
+            ]
+            subprocess.run(command, check=True)
+        except Exception as e:
+            raise RuntimeError(f"Erro ao criar vídeo MOV com banner: {e}")
 
     def on_success(self, output_file):
         self.progress.stop()
@@ -144,6 +246,7 @@ class VideoCombinerApp:
     def is_ffmpeg_available(self):
         try:
             subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+            subprocess.run(['ffprobe', '-version'], capture_output=True, check=True)
             return True
         except subprocess.CalledProcessError:
             return False
@@ -174,8 +277,9 @@ class VideoCombinerApp:
 
         ffmpeg_dir = os.path.join(ffmpeg_extract_dir, os.listdir(ffmpeg_extract_dir)[0], "bin")
         ffmpeg_exe = os.path.join(ffmpeg_dir, "ffmpeg.exe")
+        ffprobe_exe = os.path.join(ffmpeg_dir, "ffprobe.exe")
 
-        return ffmpeg_exe
+        return ffmpeg_exe, ffprobe_exe
 
     def check_ffmpeg(self):
         if not self.is_ffmpeg_available():
@@ -188,10 +292,11 @@ class VideoCombinerApp:
                     messagebox.showerror("Erro", f"Ocorreu um erro ao baixar e instalar o FFmpeg: {e}")
         else:
             self.ffmpeg_path = 'ffmpeg'
+            self.ffprobe_path = 'ffprobe'
 
     def download_ffmpeg_thread(self):
         try:
-            self.ffmpeg_path = self.download_ffmpeg()
+            self.ffmpeg_path, self.ffprobe_path = self.download_ffmpeg()
             self.progress.stop()
             self.progress.pack_forget()
             messagebox.showinfo("Sucesso", "FFmpeg baixado e instalado com sucesso.")
