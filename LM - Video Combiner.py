@@ -10,7 +10,7 @@ import tempfile
 from decimal import Decimal, getcontext
 
 class VideoCombinerApp:
-    def __init__(self, root):
+    def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("LM - Video Combiner")
         self.root.geometry("1200x800")
@@ -75,6 +75,7 @@ class VideoCombinerApp:
         files = filedialog.askopenfilenames(filetypes=[("MP4 files", "*.mp4")])
         if files:
             self.video_files.extend(files)
+            self.video_files.sort(key=lambda x: os.path.basename(x).lower())
             self.update_listbox_videos()
             messagebox.showinfo("Vídeos selecionados", f"Foram selecionados {len(files)} vídeos")
 
@@ -82,8 +83,10 @@ class VideoCombinerApp:
         files = filedialog.askopenfilenames(filetypes=[("PNG files", "*.png")])
         if files:
             self.banner_files.extend(files)
+            self.banner_files.sort(key=lambda x: os.path.basename(x).lower())
             self.update_listbox_banners()
             messagebox.showinfo("Banners selecionados", f"Foram selecionados {len(files)} banners")
+
 
     def update_listbox_videos(self):
         self.listbox_videos.delete(0, tk.END)
@@ -182,13 +185,16 @@ class VideoCombinerApp:
 
     def concatenate_videos(self, video_files, output_file):
         try:
+            getcontext().prec = 10
+
             inputs = []
             filter_complex = ""
 
             for i, video in enumerate(video_files):
                 inputs.extend(['-i', video])
-                filter_complex += f"[{i}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[v{i}];"
+                filter_complex += f"[{i}:v]scale=1920:1080:force_original_aspect_ratio=decrease[v{i}];"
                 filter_complex += f"[{i}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[a{i}];"
+
 
             filter_complex += "".join([f"[v{i}][a{i}]" for i in range(len(video_files))])
             filter_complex += f"concat=n={len(video_files)}:v=1:a=1[v][a]"
@@ -199,7 +205,7 @@ class VideoCombinerApp:
                 '-filter_complex', filter_complex,
                 '-map', '[v]',
                 '-map', '[a]',
-                '-r', '59.94',
+                '-r', '23.98',
                 '-c:v', 'libx264',
                 '-c:a', 'aac',
                 '-strict', 'experimental',
@@ -223,10 +229,11 @@ class VideoCombinerApp:
                 '-loop', '1',
                 '-i', banner_file,
                 '-t', str(duration),
-                '-r', '59.94',
+                '-r', '23.98',
                 '-c:v', 'prores_ks',
                 '-c:a', 'aac',
                 '-shortest',
+                '-y',
                 output_file
             ]
             subprocess.run(command, check=True)
